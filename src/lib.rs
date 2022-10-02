@@ -1,10 +1,6 @@
-use crate::models::Splat3Response;
-use reqwest::Error;
-use serde::Deserialize;
-use serde_json::json;
-use std::ops::Add;
-use std::thread::current;
 use worker::*;
+
+use crate::models::Splat3Response;
 
 mod models;
 mod utils;
@@ -13,34 +9,26 @@ mod utils;
 /// Splatting it everyplace
 /// I Disconnected
 ///                 - taniwha3
+///
+/// Final output should be something like this:
+///
+///     🦑 Current maps: Scorch Gorge, MakoMart. Next maps: Mincemeat Metalworks, Museum d'Alfonsino 🐙
 fn log_request(req: &Request) {
-    console_log!(
-        "{} - [{}]",
-        Date::now().to_string(),
-        req.path() // req.cf().coordinates().unwrap_or_default(),
-                   // req.cf().region().unwrap_or_else(|| "unknown region".into())
-    );
+    console_log!("{} - [{}]", Date::now().to_string(), req.path());
 }
 
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
     log_request(&req);
 
-    // Optionally, get more helpful error messages written to the console in the case of a panic.
     utils::set_panic_hook();
 
-    // Optionally, use the Router to handle matching endpoints, use ":name" placeholders, or "*name"
-    // catch-alls to match on specific patterns. Alternatively, use `Router::with_data(D)` to
-    // provide arbitrary data that will be accessible in each route via the `ctx.data()` method.
     let router = Router::new();
 
-    // Add as many routes as your Worker needs! Each route will get a `Request` for handling HTTP
-    // functionality and a `RouteContext` which you can use to  and get route parameters and
-    // Environment bindings like KV Stores, Durable Objects, Secrets, and Variables.
     router
         .get_async("/", |_, _| async move {
+            // Make a GET request to the maps data endpoint
             let request_url = "https://splatoon3.ink/data/schedules.json".to_string();
-
             let response = reqwest::get(&request_url)
                 .await
                 .expect("Failed to fetch")
@@ -48,12 +36,14 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
                 .await
                 .expect("Failed to deserialize");
 
+            // This will be the final output
             let mut output = String::new();
-
             output.push_str("🦑 Current maps: ");
 
+            // Current stages are in the first node
             let current_stages = &response.data.regular_schedules.nodes[0]
-                .regular_match_setting.vs_stages;
+                .regular_match_setting
+                .vs_stages;
             let current_stages_output = current_stages
                 .iter()
                 .map(|stage| stage.name.clone())
@@ -63,8 +53,10 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
 
             output.push_str(". Next maps: ");
 
+            // Next stages are in the 2nd node
             let next_stages = &response.data.regular_schedules.nodes[1]
-                .regular_match_setting.vs_stages;
+                .regular_match_setting
+                .vs_stages;
             let next_stages_output = next_stages
                 .iter()
                 .map(|stage| stage.name.clone())
@@ -77,25 +69,6 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
             output.push_str(" 🐙");
 
             Response::ok(output)
-        })
-        .post_async("/form/:field", |mut req, ctx| async move {
-            if let Some(name) = ctx.param("field") {
-                let form = req.form_data().await?;
-
-                return match form.get(name) {
-                    Some(FormEntry::Field(value)) => Response::from_json(&json!({ name: value })),
-                    Some(FormEntry::File(_)) => {
-                        Response::error("`field` param in form shouldn't be a File", 422)
-                    }
-                    None => Response::error("Bad Request", 400),
-                };
-            }
-
-            Response::error("Bad Request", 400)
-        })
-        .get("/worker-version", |_, ctx| {
-            let version = ctx.var("WORKERS_RS_VERSION")?.to_string();
-            Response::ok(version)
         })
         .run(req, env)
         .await
