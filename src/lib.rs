@@ -1,6 +1,12 @@
+use crate::models::Splat3Response;
+use reqwest::Error;
+use serde::Deserialize;
 use serde_json::json;
+use std::ops::Add;
+use std::thread::current;
 use worker::*;
 
+mod models;
 mod utils;
 
 /// Paint is everywhere
@@ -9,11 +15,10 @@ mod utils;
 ///                 - taniwha3
 fn log_request(req: &Request) {
     console_log!(
-        "{} - [{}], located at: {:?}, within: {}",
+        "{} - [{}]",
         Date::now().to_string(),
-        req.path(),
-        req.cf().coordinates().unwrap_or_default(),
-        req.cf().region().unwrap_or("unknown region".into())
+        req.path() // req.cf().coordinates().unwrap_or_default(),
+                   // req.cf().region().unwrap_or_else(|| "unknown region".into())
     );
 }
 
@@ -33,19 +38,57 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
     // functionality and a `RouteContext` which you can use to  and get route parameters and
     // Environment bindings like KV Stores, Durable Objects, Secrets, and Variables.
     router
-        .get("/", |_, _| Response::ok("Hello from Workers!"))
+        .get_async("/", |_, _| async move {
+            let request_url = "https://splatoon3.ink/data/schedules.json".to_string();
+
+            let response = reqwest::get(&request_url)
+                .await
+                .expect("Failed to fetch")
+                .json::<Splat3Response>()
+                .await
+                .expect("Failed to deserialize");
+
+            let mut output = String::new();
+
+            output.push_str("🦑 Current maps: ");
+
+            let current_stages = &response.data.regular_schedules.nodes[0]
+                .regular_match_setting.vs_stages;
+            let current_stages_output = current_stages
+                .iter()
+                .map(|stage| stage.name.clone())
+                .collect::<Vec<String>>()
+                .join(", ");
+            output.push_str(&current_stages_output);
+
+            output.push_str(". Next maps: ");
+
+            let next_stages = &response.data.regular_schedules.nodes[1]
+                .regular_match_setting.vs_stages;
+            let next_stages_output = next_stages
+                .iter()
+                .map(|stage| stage.name.clone())
+                .collect::<Vec<String>>()
+                .join(", ");
+
+            // AlienatedWorker: I don't think you need that "&*", I think "&" should be ok
+            // codyphobe: And it wasnt assigned to output so it was thrown away
+            output.push_str(&next_stages_output);
+            output.push_str(" 🐙");
+
+            Response::ok(output)
+        })
         .post_async("/form/:field", |mut req, ctx| async move {
             if let Some(name) = ctx.param("field") {
                 let form = req.form_data().await?;
-                match form.get(name) {
-                    Some(FormEntry::Field(value)) => {
-                        return Response::from_json(&json!({ name: value }))
-                    }
+
+                return match form.get(name) {
+                    Some(FormEntry::Field(value)) => Response::from_json(&json!({ name: value })),
                     Some(FormEntry::File(_)) => {
-                        return Response::error("`field` param in form shouldn't be a File", 422);
+                        Response::error("`field` param in form shouldn't be a File", 422)
                     }
-                    None => return Response::error("Bad Request", 400),
-                }
+                    None => Response::error("Bad Request", 400),
+                };
             }
 
             Response::error("Bad Request", 400)
