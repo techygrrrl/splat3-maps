@@ -18,3 +18,7 @@ Here are some rhymes:
 // I don't think you need that "&*", I think "&" should be ok
 // And it wasnt assigned to output so it was thrown away
 ```
+
+## Development
+
+For local development, please see the [Contributing doc](CONTRIBUTING.md).
